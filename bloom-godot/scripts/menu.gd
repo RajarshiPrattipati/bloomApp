@@ -5,10 +5,11 @@ extends CanvasLayer
 signal closed
 signal wallet_changed
 
-const TABS := ["Quests", "Pass", "Cards", "Teams", "Shop"]
+const TABS := ["Quests", "Pass", "Cards", "Teams", "Shop", "Settings"]
 
 var tab := 0
 var busy := false
+var _gen := 0  # bumped each refresh; stale async builds bail out (no interleaving)
 var cfg: Dictionary = {}
 var content: VBoxContainer
 var title_label: Label
@@ -59,7 +60,8 @@ func _ready() -> void:
 	for i in TABS.size():
 		var b := Button.new(); b.text = TABS[i]; b.focus_mode = Control.FOCUS_NONE
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.add_theme_font_size_override("font_size", 14)
+		b.add_theme_font_size_override("font_size", 12)
+		b.clip_text = true
 		var idx := i
 		b.pressed.connect(func(): _switch(idx))
 		tabs_row.add_child(b)
@@ -87,6 +89,7 @@ func _switch(i: int) -> void:
 	await _refresh()
 
 func _refresh() -> void:
+	_gen += 1
 	title_label.text = TABS[tab]
 	for i in tab_buttons.size():
 		tab_buttons[i].theme_type_variation = "Primary" if i == tab else "Ghost"
@@ -98,6 +101,7 @@ func _refresh() -> void:
 		2: await _build_cards()
 		3: await _build_teams()
 		4: _build_shop()
+		5: _build_settings()
 	status_label.text = ""
 
 func _clear() -> void:
@@ -146,7 +150,9 @@ func _do(fn: Callable) -> void:
 
 # ── tabs ──
 func _build_quests() -> void:
+	var g := _gen
 	var r := await Net.quests()
+	if _gen != g: return
 	var list: Array = r.get("_list", [])
 	var any := false
 	for q in list:
@@ -158,7 +164,9 @@ func _build_quests() -> void:
 	_action("Claim rewards", any, func(): await _do(func(): await Net.quests_claim()), "Primary" if any else "Ghost")
 
 func _build_pass() -> void:
+	var g := _gen
 	var p := await Net.pass_status()
+	if _gen != g: return
 	_card_row("Tier %d / %d" % [int(p.get("tier", 0)), int(p.get("maxTier", 30))], "XP %d / %d into next" % [int(p.get("xpIntoTier", 0)), int(p.get("xpPerTier", 100))], "")
 	_info("Free rewards ready: %d" % int(p.get("claimableFree", 0)))
 	if p.get("active", false):
@@ -169,14 +177,18 @@ func _build_pass() -> void:
 	_action("Claim pass rewards", claimable > 0, func(): await _do(func(): await Net.pass_claim()), "Primary" if claimable > 0 else "Ghost")
 
 func _build_cards() -> void:
+	var g := _gen
 	var c := await Net.cards()
+	if _gen != g: return
 	_card_row("%d cards · +%d%% coins" % [int(c.get("ownedCards", 0)), int(c.get("totalBonusPct", 0))], "", "")
 	for s in c.get("sets", []):
 		var tag := "  ✓ complete" if s.get("complete", false) else ""
 		_card_row(str(s.get("name", "")), "%d/%d%s" % [int(s.get("owned", 0)), int(s.get("total", 6)), tag], "+%d%%" % int(s.get("bonusPct", 0)))
 
 func _build_teams() -> void:
+	var g := _gen
 	var t := await Net.team_mine()
+	if _gen != g: return
 	if t.has("id"):
 		_card_row(str(t.get("name", "")), "%d members" % int(t.get("memberCount", 1)), "")
 		var proj = t.get("project")
@@ -191,6 +203,7 @@ func _build_teams() -> void:
 		_info("You are not in a team")
 		_action("Create a team", true, func(): await _do(func(): await Net.team_create("Bloomers %d" % (randi() % 900 + 100))))
 		var lst := await Net.team_list()
+		if _gen != g: return
 		for tm in lst.get("_list", []):
 			var h := _card_row(str(tm.get("name", "")), "%d members" % int(tm.get("memberCount", 1)), "")
 			var jb := Button.new(); jb.text = "Join"; jb.focus_mode = Control.FOCUS_NONE
@@ -223,3 +236,40 @@ func _build_shop() -> void:
 		b.pressed.connect(func(): await _do(func(): await Net.purchase(sku)))
 		h.add_child(b)
 	_info("Sandbox — purchases are simulated")
+
+func _build_settings() -> void:
+	_info("Audio")
+	_audio_row("Music", Settings.music_on, Settings.music_vol,
+		func(on): Settings.set_music_on(on),
+		func(val): Settings.set_music_vol(val))
+	_audio_row("SFX", Settings.sfx_on, Settings.sfx_vol,
+		func(on): Settings.set_sfx_on(on),
+		func(val): Settings.set_sfx_vol(val))
+	_info("Saved on this device.")
+	if Settings.phone != "":
+		_info("Signed in as %s" % Settings.phone)
+
+# a Card2 row: checkbox to enable the channel + a volume slider (+ live %)
+func _audio_row(name: String, on: bool, vol: float, on_cb: Callable, vol_cb: Callable) -> void:
+	var p := PanelContainer.new(); p.theme_type_variation = "Card2"
+	content.add_child(p)
+	var v := VBoxContainer.new(); v.add_theme_constant_override("separation", 8)
+	p.add_child(v)
+	var head := HBoxContainer.new(); v.add_child(head)
+	var cb := CheckBox.new(); cb.text = name; cb.button_pressed = on; cb.focus_mode = Control.FOCUS_NONE
+	cb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(cb)
+	var pct := Label.new(); pct.theme_type_variation = "Dim"; pct.text = "%d%%" % int(round(vol * 100.0))
+	head.add_child(pct)
+	var sl := HSlider.new()
+	sl.min_value = 0.0; sl.max_value = 1.0; sl.step = 0.01; sl.value = vol
+	sl.custom_minimum_size = Vector2(0, 30); sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sl.editable = on
+	v.add_child(sl)
+	cb.toggled.connect(func(pressed: bool):
+		on_cb.call(pressed)
+		sl.editable = pressed
+		Sfx.play("ui_tap", -12))
+	sl.value_changed.connect(func(val: float):
+		vol_cb.call(val)
+		pct.text = "%d%%" % int(round(val * 100.0)))

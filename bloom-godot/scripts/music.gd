@@ -92,7 +92,7 @@ func _tick() -> void:
 func _make_pool(arr: Array[AudioStreamPlayer], n: int) -> void:
 	for i in n:
 		var p := AudioStreamPlayer.new()
-		p.bus = "Master"
+		p.bus = "Music"
 		add_child(p)
 		arr.append(p)
 

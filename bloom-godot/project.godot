@@ -24,6 +24,7 @@ config/icon="res://icon.png"
 
 [autoload]
 
+Settings="*res://scripts/settings.gd"
 Audio="*res://scripts/audio.gd"
 Screenshotter="*res://tools/screenshot.gd"
 Net="*res://scripts/net.gd"
@@ -132,6 +133,6 @@ zoom_out={
 [rendering]
 
 renderer/rendering_method="forward_plus"
-renderer/rendering_method.mobile="mobile"
+renderer/rendering_method.mobile="gl_compatibility"
 anti_aliasing/quality/msaa_3d=2
 textures/vram_compression/import_etc2_astc=true

@@ -14,7 +14,7 @@ var music_player: AudioStreamPlayer
 func _ready() -> void:
 	for i in VOICES:
 		var p := AudioStreamPlayer.new()
-		p.bus = "Master"
+		p.bus = "SFX"
 		add_child(p)
 		players.append(p)
 	_build_bank()
@@ -128,7 +128,7 @@ func start_ambience() -> void:
 	if music_player != null:
 		return
 	music_player = AudioStreamPlayer.new()
-	music_player.bus = "Master"
+	music_player.bus = "Music"   # ambience pad rides the Music channel
 	add_child(music_player)
 	var amb: AudioStream = load("res://sounds/ambience.ogg")
 	if amb:

@@ -3,9 +3,9 @@ extends Node
 ## Mirrors the web client: HMAC-SHA256 over (nonce.ts.body) + one-time nonce +
 ## timestamp + Bearer JWT. The server is authoritative for everything.
 
-const BASE := "http://localhost:4000"
+const BASE := "https://bloom-app-xi.vercel.app"
 # Baked per release; rotate alongside the server's HMAC_SECRET.
-const HMAC_SECRET := "dev-only-insecure-secret-please-change-32++"
+const HMAC_SECRET := "33e53d6654a492a03ac18b2803d16d0772566a5e838ed2aefce0697a9fcca175"
 const APP_VERSION := "godot-0.1.0"
 
 var token := ""

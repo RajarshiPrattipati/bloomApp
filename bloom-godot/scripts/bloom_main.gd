@@ -18,6 +18,11 @@ var view: Dictionary = {}
 var cfg: Dictionary = {}
 var coins_shown := 0.0
 var momentum_shown := 1.0
+
+# ── ambient scenery animation ──
+var _t := 0.0
+var _boats: Array = []   # {node, base_y, speed, phase}
+var _birds: Array = []   # {node, radius, speed, phase, cx, cz, y}
 var spinning := false
 var menu_open := false
 var gh_ends_at_ms := 0
@@ -34,7 +39,7 @@ var cam: Camera3D
 var cam_target := Vector3(0, 0.4, 0)
 var yaw := 45.0
 var pitch := 36.0
-var zoom := 17.0
+var zoom := 21.0
 var touches: Dictionary = {}
 var drag_moved := false
 var pinch_prev := 0.0
@@ -42,10 +47,17 @@ var twist_prev := 0.0
 var has_two := false
 
 # ── placement ──
+const OK_GREEN := Color(0.23, 0.80, 0.44)   # valid plot / confirm
+const BAD_RED := Color(0.87, 0.31, 0.29)    # invalid plot / cancel
+const GRAB_PX := 140.0                       # touch radius to grab the move handle
 var placing := false
 var ghost: Node3D
 var ghost_foot: MeshInstance3D
+var ghost_handle: Node3D                      # draggable move gizmo under the ghost
 var ghost_cell := Vector2i(999, 999)
+var ghost_valid := false
+var _last_valid := -1                         # gate re-tinting to validity changes
+var dragging_building := false
 
 # ── HUD refs ──
 var hud: CanvasLayer
@@ -70,6 +82,7 @@ var gh_banner: PanelContainer
 var gh_label: Label
 var toast_box: VBoxContainer
 var menu_node: CanvasLayer
+var login_node: CanvasLayer
 
 var prev_level := 1
 
@@ -78,7 +91,9 @@ func _ready() -> void:
 	_build_base()
 	_setup_camera()
 	_setup_hud()
+	_maybe_login()
 	Sfx.start_ambience()
+	if "--placing" in OS.get_cmdline_user_args(): _enter_placing()  # dev: force placement UI pre-network
 	await Net.ensure_auth()
 	_load_layout()
 	cfg = await Net.get_config()
@@ -94,7 +109,6 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a == "--autospin": _auto_spin()
 		if a == "--autobuild": _auto_build()
-		if a == "--placing": _on_build_pressed()
 		if a.begins_with("--menu"): _open_menu_dev(a)
 
 func _open_menu_dev(arg: String) -> void:
@@ -116,17 +130,58 @@ func _put(model: String, cell: Vector2i, rot_y := 0.0, y := 0.0) -> Node3D:
 
 func _build_world() -> void:
 	var env := WorldEnvironment.new()
-	var e: Environment = load("res://scenes/main-environment.tres")
-	if e: env.environment = e
+	env.environment = _make_environment()
 	add_child(env)
+	# warm key sun + a cool fill so nothing reads as flat grey
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-55, -52, 0)
-	sun.light_energy = 1.15
+	sun.rotation_degrees = Vector3(-52, -50, 0)
+	sun.light_energy = 1.25
+	sun.light_color = Color(1.0, 0.95, 0.84)
 	sun.shadow_enabled = true
 	add_child(sun)
+	var fill := DirectionalLight3D.new()
+	fill.rotation_degrees = Vector3(-30, 130, 0)
+	fill.light_energy = 0.35
+	fill.light_color = Color(0.78, 0.86, 1.0)
+	add_child(fill)
+	_build_scenery()
 	for x in range(GRID_MIN, GRID_MAX + 1):
 		for z in range(GRID_MIN, GRID_MAX + 1):
 			_put("grass", Vector2i(x, z))
+
+# Pastel sky + soft atmosphere — replaces the flat grey background.
+func _make_environment() -> Environment:
+	var env := Environment.new()
+	env.background_mode = Environment.BG_SKY
+	var sky := Sky.new()
+	var sm := ProceduralSkyMaterial.new()
+	sm.sky_top_color = Color("8fb6ff")        # periwinkle
+	sm.sky_horizon_color = Color("ffe2d0")     # warm peach
+	sm.sky_curve = 0.10
+	sm.ground_horizon_color = Color("ffe2d0")
+	sm.ground_bottom_color = Color("a8e6df")   # pastel teal (water haze)
+	sm.ground_curve = 0.05
+	sm.sun_angle_max = 24.0
+	sm.energy_multiplier = 1.05
+	sky.sky_material = sm
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_energy = 1.15
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_white = 1.1
+	# gentle aerial haze so the far hills melt into the sky (subtle at our depth)
+	env.fog_enabled = true
+	env.fog_light_color = Color("dbe6ff")
+	env.fog_sun_scatter = 0.1
+	env.fog_density = 0.0026
+	env.fog_aerial_perspective = 0.6
+	env.fog_sky_affect = 0.0
+	# a kiss of bloom for the pastel glow
+	env.glow_enabled = true
+	env.glow_intensity = 0.35
+	env.glow_bloom = 0.08
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+	return env
 
 func _mark(cell: Vector2i, is_seed: bool) -> void:
 	no_build[cell] = true
@@ -147,6 +202,221 @@ func _build_base() -> void:
 	for c in [Vector2i(4, 4), Vector2i(-4, 4), Vector2i(4, -4), Vector2i(-4, -4), Vector2i(5, 2), Vector2i(-5, -2), Vector2i(3, -4), Vector2i(-3, 4), Vector2i(2, 4), Vector2i(-2, -4)]:
 		_put(("grass-trees-tall" if (c.x + c.y) % 2 == 0 else "grass-trees"), c)
 		no_build[c] = true
+
+# ── fixed decorative environment (island, water, forest ring, hills, clouds) ──
+const C_MEADOW := Color("8fcf63")     # wild meadow green (a touch deeper than the lawn tiles)
+const C_CLIFF := Color("d9b06f")      # sandy cliff
+const C_BEACH := Color("f1dca6")      # pale shore sand
+const C_WATER := Color("63c3c0")      # pastel teal sea
+const C_SHALLOW := Color("a7e8de")    # bright shallows
+
+func _mat(color: Color, rough := 0.9, metallic := 0.0, unshaded := false) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = color
+	m.roughness = rough
+	m.metallic = metallic
+	if unshaded:
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	if color.a < 1.0:
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	return m
+
+func _disc(radius: float, height: float, y: float, color: Color, rough := 0.9) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = radius; cm.bottom_radius = radius; cm.height = height
+	cm.radial_segments = 48
+	mi.mesh = cm
+	mi.material_override = _mat(color, rough)
+	mi.position = Vector3(0, y, 0)
+	add_child(mi)
+	return mi
+
+func _build_scenery() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 13377
+
+	# ── the island: grassy top, sandy cliff sides, a pale beach, sitting in the sea
+	_disc(11.4, 1.7, -0.9, C_CLIFF, 0.95)            # cliff body
+	_disc(12.4, 0.18, -0.12, C_BEACH, 1.0)           # beach shelf rim
+	_disc(11.2, 0.16, -0.04, C_MEADOW, 0.95)         # meadow top (around the lawn tiles)
+
+	# ── the sea: a huge calm plane + a brighter shallows ring hugging the island
+	var sea := MeshInstance3D.new()
+	var pm := PlaneMesh.new(); pm.size = Vector2(600, 600)
+	sea.mesh = pm
+	sea.material_override = _mat(C_WATER, 0.15, 0.1)
+	sea.position = Vector3(0, -0.42, 0)
+	add_child(sea)
+	_disc(18.0, 0.1, -0.34, Color(C_SHALLOW.r, C_SHALLOW.g, C_SHALLOW.b, 0.8), 0.25)
+	# a soft foam ring where the shore meets the sea
+	var foam := MeshInstance3D.new()
+	var tm := TorusMesh.new(); tm.inner_radius = 11.7; tm.outer_radius = 12.6; tm.rings = 48; tm.ring_segments = 16
+	foam.mesh = tm
+	foam.material_override = _mat(Color(1, 1, 1, 0.7), 1.0, 0.0, true)
+	foam.position = Vector3(0, -0.2, 0)
+	add_child(foam)
+
+	# ── forest ring: Kenney tree tiles scattered around the village edge
+	for x in range(-10, 11):
+		for z in range(-10, 11):
+			var c := Vector2i(x, z)
+			var d := Vector2(x, z).length()
+			if d < 6.2 or d > 10.3: continue       # a band just outside the buildable grid
+			if no_build.has(c): continue
+			if rng.randf() > 0.5: continue
+			var t := _put(("grass-trees-tall" if rng.randf() > 0.5 else "grass-trees"), c, rng.randf() * 360.0)
+			var s := rng.randf_range(0.85, 1.15)
+			t.scale = Vector3(s, s, s)
+
+	# ── boulders dotted along the shore
+	for i in 9:
+		var ang := rng.randf() * TAU
+		var rad := rng.randf_range(9.6, 11.6)
+		_rock(Vector3(cos(ang) * rad, -0.18, sin(ang) * rad), rng.randf_range(0.5, 1.1), rng)
+
+	# ── wildflowers across the meadow for little colour pops
+	var blooms := [Color("ff9ec9"), Color("ffe27a"), Color("c6a9ff"), Color("ff8a8a"), Color("ffffff")]
+	for i in 46:
+		var ang := rng.randf() * TAU
+		var rad := rng.randf_range(5.6, 10.6)
+		var p := Vector3(cos(ang) * rad, 0.05, sin(ang) * rad)
+		if Vector2(p.x, p.z).length() < 6.0 and no_build.has(Vector2i(roundi(p.x), roundi(p.z))): continue
+		_flower(p, blooms[rng.randi() % blooms.size()], rng)
+
+	# ── sailboats bobbing on the sea
+	for i in 3:
+		var ang := rng.randf() * TAU
+		var rad := rng.randf_range(14.5, 20.0)
+		var b := _boat(Vector3(cos(ang) * rad, -0.32, sin(ang) * rad), rng)
+		_boats.append({"node": b, "base_y": -0.32, "speed": rng.randf_range(0.6, 1.1), "phase": rng.randf() * TAU})
+
+	# ── lily pads in the shallows
+	for i in 10:
+		var ang := rng.randf() * TAU
+		var rad := rng.randf_range(12.8, 16.0)
+		_lilypad(Vector3(cos(ang) * rad, -0.31, sin(ang) * rad), rng)
+
+	# ── a little lighthouse landmark on the shore
+	_lighthouse(Vector3(8.4, -0.05, 8.4))
+
+	# ── a couple of little bird flocks circling overhead
+	for i in 3:
+		var ang := rng.randf() * TAU
+		var rad := rng.randf_range(16.0, 28.0)
+		var fl := _flock(rng)
+		_birds.append({"node": fl, "radius": rad, "speed": rng.randf_range(0.12, 0.24),
+			"phase": ang, "cx": rng.randf_range(-2, 2), "cz": rng.randf_range(-2, 2), "y": rng.randf_range(15.0, 22.0)})
+
+func _rock(pos: Vector3, s: float, rng: RandomNumberGenerator) -> void:
+	var mi := MeshInstance3D.new()
+	var sm := SphereMesh.new(); sm.radius = s; sm.height = s * 1.5
+	mi.mesh = sm
+	mi.material_override = _mat(Color("b7b2c9").lightened(rng.randf_range(-0.05, 0.08)), 0.95)
+	mi.scale = Vector3(1.0, rng.randf_range(0.55, 0.8), 1.0)
+	mi.position = pos
+	mi.rotation.y = rng.randf() * TAU
+	add_child(mi)
+
+func _flower(pos: Vector3, col: Color, rng: RandomNumberGenerator) -> void:
+	var root := Node3D.new()
+	var stem := MeshInstance3D.new()
+	var sc := CylinderMesh.new(); sc.top_radius = 0.02; sc.bottom_radius = 0.02; sc.height = 0.28
+	stem.mesh = sc; stem.material_override = _mat(Color("6fae5a"), 0.9); stem.position.y = 0.14
+	root.add_child(stem)
+	var head := MeshInstance3D.new()
+	var hs := SphereMesh.new(); hs.radius = 0.08; hs.height = 0.16
+	head.mesh = hs; head.material_override = _mat(col, 0.8); head.position.y = 0.3
+	root.add_child(head)
+	root.position = pos
+	root.scale = Vector3.ONE * rng.randf_range(0.8, 1.3)
+	add_child(root)
+
+func _boat(pos: Vector3, rng: RandomNumberGenerator) -> Node3D:
+	var root := Node3D.new()
+	var hull_cols := [Color("ff8aa6"), Color("8fd2ff"), Color("ffd166"), Color("c6a9ff")]
+	var hull := MeshInstance3D.new()
+	var hm := BoxMesh.new(); hm.size = Vector3(0.9, 0.34, 0.5)
+	hull.mesh = hm; hull.material_override = _mat(hull_cols[rng.randi() % hull_cols.size()], 0.6)
+	hull.position.y = 0.1
+	root.add_child(hull)
+	var mast := MeshInstance3D.new()
+	var mc := CylinderMesh.new(); mc.top_radius = 0.025; mc.bottom_radius = 0.025; mc.height = 0.8
+	mast.mesh = mc; mast.material_override = _mat(Color("9c6b43"), 0.9); mast.position.y = 0.6
+	root.add_child(mast)
+	var sail := MeshInstance3D.new()
+	var pm := PrismMesh.new(); pm.size = Vector3(0.5, 0.7, 0.02)
+	sail.mesh = pm; sail.material_override = _mat(Color(1, 1, 1, 1.0), 0.85)
+	sail.position = Vector3(0.0, 0.66, 0.0); sail.rotation.z = -PI / 2
+	root.add_child(sail)
+	root.position = pos
+	root.rotation.y = rng.randf() * TAU
+	add_child(root)
+	return root
+
+func _lilypad(pos: Vector3, rng: RandomNumberGenerator) -> void:
+	var pad := MeshInstance3D.new()
+	var cm := CylinderMesh.new(); cm.top_radius = 0.34; cm.bottom_radius = 0.34; cm.height = 0.04
+	pad.mesh = cm; pad.material_override = _mat(Color("6cc06a"), 0.9)
+	pad.position = pos
+	pad.scale = Vector3.ONE * rng.randf_range(0.7, 1.2)
+	add_child(pad)
+	if rng.randf() > 0.5:
+		var fl := MeshInstance3D.new()
+		var fs := SphereMesh.new(); fs.radius = 0.1; fs.height = 0.18
+		fl.mesh = fs; fl.material_override = _mat(Color("ff9ec9"), 0.8)
+		fl.position = pos + Vector3(0, 0.08, 0)
+		add_child(fl)
+
+func _lighthouse(pos: Vector3) -> void:
+	var root := Node3D.new()
+	var base := MeshInstance3D.new()
+	var bc := CylinderMesh.new(); bc.top_radius = 0.28; bc.bottom_radius = 0.4; bc.height = 1.5
+	base.mesh = bc; base.material_override = _mat(Color("fff3e9"), 0.9); base.position.y = 0.75
+	root.add_child(base)
+	var stripe := MeshInstance3D.new()
+	var sc := CylinderMesh.new(); sc.top_radius = 0.31; sc.bottom_radius = 0.35; sc.height = 0.34
+	stripe.mesh = sc; stripe.material_override = _mat(Color("ff7d8c"), 0.9); stripe.position.y = 0.7
+	root.add_child(stripe)
+	var lamp := MeshInstance3D.new()
+	var lc := CylinderMesh.new(); lc.top_radius = 0.22; lc.bottom_radius = 0.22; lc.height = 0.3
+	lamp.mesh = lc; lamp.material_override = _mat(Color("ffe27a"), 0.4, 0.0, true); lamp.position.y = 1.62
+	root.add_child(lamp)
+	var roof := MeshInstance3D.new()
+	var rc := CylinderMesh.new(); rc.top_radius = 0.0; rc.bottom_radius = 0.3; rc.height = 0.3
+	roof.mesh = rc; roof.material_override = _mat(Color("ff7d8c"), 0.9); roof.position.y = 1.92
+	root.add_child(roof)
+	root.position = pos
+	add_child(root)
+
+# a small flock of V-shaped birds (one Node3D we slide around the sky)
+func _flock(rng: RandomNumberGenerator) -> Node3D:
+	var root := Node3D.new()
+	var mat := _mat(Color("4b4068"), 1.0, 0.0, true)
+	for i in rng.randi_range(3, 5):
+		var bird := MeshInstance3D.new()
+		var pm := PrismMesh.new(); pm.size = Vector3(0.5, 0.16, 0.02)
+		bird.mesh = pm; bird.material_override = mat
+		bird.position = Vector3(rng.randf_range(-1.2, 1.2), rng.randf_range(-0.4, 0.4), rng.randf_range(-1.0, 1.0))
+		bird.rotation.x = PI / 2
+		bird.scale = Vector3.ONE * rng.randf_range(0.7, 1.1)
+		root.add_child(bird)
+	add_child(root)
+	return root
+
+# gentle ambient motion — bobbing boats, circling birds
+func _animate_scenery(_delta: float) -> void:
+	for b in _boats:
+		var n: Node3D = b["node"]
+		if not is_instance_valid(n): continue
+		n.position.y = b["base_y"] + sin(_t * b["speed"] + b["phase"]) * 0.05
+		n.rotation.z = sin(_t * b["speed"] * 0.8 + b["phase"]) * 0.08
+	for f in _birds:
+		var n: Node3D = f["node"]
+		if not is_instance_valid(n): continue
+		var a: float = f["phase"] + _t * f["speed"]
+		n.position = Vector3(f["cx"] + cos(a) * f["radius"], f["y"], f["cz"] + sin(a) * f["radius"])
+		n.rotation.y = -a + PI / 2
 
 # ── camera (pan + orbit + zoom) ───────────────────────────────────────────────
 func _setup_camera() -> void:
@@ -183,8 +453,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.pressed:
 			touches[event.index] = event.position
 			drag_moved = false
+			if placing and touches.size() == 1:
+				dragging_building = _near_handle(event.position)
 			if touches.size() == 2:
 				has_two = true
+				dragging_building = false
 				var pts: Array = touches.values()
 				pinch_prev = pts[0].distance_to(pts[1])
 				twist_prev = (pts[1] - pts[0]).angle()
@@ -192,12 +465,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			if touches.size() == 1 and not drag_moved:
 				_handle_tap(event.position)
 			touches.erase(event.index)
+			dragging_building = false
 			if touches.size() < 2: has_two = false
 	elif event is InputEventScreenDrag:
 		touches[event.index] = event.position
 		if touches.size() == 1 and not has_two:
-			if event.relative.length() > 3.0: drag_moved = true
-			_pan(event.relative)
+			if placing and dragging_building:
+				if event.relative.length() > 1.0: drag_moved = true
+				_drag_building_to(event.position)
+			else:
+				if event.relative.length() > 3.0: drag_moved = true
+				_pan(event.relative)
 		elif touches.size() == 2:
 			var pts: Array = touches.values()
 			var d: float = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
@@ -309,6 +587,24 @@ func _pick_frontier() -> Vector2i:
 	var c := _frontier_cells()
 	return c[0] if c.size() > 0 else Vector2i(999, 999)
 
+# ── login (mobile + OTP) ──────────────────────────────────────────────────────
+# Show the OTP login gate unless already logged in (persisted) or a dev flag is
+# set. The game keeps initialising behind the modal; it dismisses on verify.
+func _maybe_login() -> void:
+	var args := OS.get_cmdline_user_args()
+	var dev := false
+	for a in args:
+		if a in ["--skiplogin", "--placing", "--autospin", "--autobuild"] or a.begins_with("--menu"):
+			dev = true
+	if Settings.logged_in or dev:
+		return
+	login_node = (load("res://scripts/login.gd") as GDScript).new()
+	add_child(login_node)
+	login_node.verified.connect(func(p: String):
+		Settings.mark_logged_in(p)
+		if is_instance_valid(login_node): login_node.queue_free()
+		login_node = null)
+
 # ── layout persistence (local) ────────────────────────────────────────────────
 func _layout_path() -> String:
 	return "user://layout_%s.json" % Net.player_id
@@ -348,15 +644,15 @@ func _enter_placing() -> void:
 	ghost_foot = MeshInstance3D.new()
 	var fm := BoxMesh.new(); fm.size = Vector3(1.0, 0.12, 1.0)
 	ghost_foot.mesh = fm
-	var fmat := StandardMaterial3D.new()
-	fmat.albedo_color = Color(UiTheme.GOLD.r, UiTheme.GOLD.g, UiTheme.GOLD.b, 0.6)
-	fmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	ghost_foot.material_override = fmat
+	ghost_foot.material_override = StandardMaterial3D.new()
 	add_child(ghost_foot)
+	ghost_handle = _build_ghost_handle()
+	add_child(ghost_handle)
+	_last_valid = -1
 	_update_ghost()
 	_update_palette_selection()
 	_update_action_rows()
-	_toast("Pick a style + plot, then ✓ Place", UiTheme.DIM)
+	_toast("Drag the handle to move · ✓ Confirm / ✕ Cancel", UiTheme.DIM)
 
 func _set_model(m: int) -> void:
 	selected_model = m
@@ -365,6 +661,7 @@ func _set_model(m: int) -> void:
 		ghost.queue_free()
 		ghost = _instance(BUILDING_MODELS[selected_model])
 		add_child(ghost)
+		_last_valid = -1   # force re-tint of the freshly-instanced ghost
 		_update_ghost()
 
 func _update_palette_selection() -> void:
@@ -372,15 +669,108 @@ func _update_palette_selection() -> void:
 		palette_buttons[i].theme_type_variation = "Primary" if i == selected_model else "Ghost"
 
 func _update_ghost() -> void:
-	if ghost: ghost.position = Vector3(ghost_cell.x, 0.0, ghost_cell.y)
-	if ghost_foot: ghost_foot.position = Vector3(ghost_cell.x, 0.08, ghost_cell.y)
+	ghost_cell.x = clampi(ghost_cell.x, GRID_MIN, GRID_MAX)
+	ghost_cell.y = clampi(ghost_cell.y, GRID_MIN, GRID_MAX)
+	var p := Vector3(ghost_cell.x, 0.0, ghost_cell.y)
+	if ghost: ghost.position = p
+	if ghost_foot: ghost_foot.position = p + Vector3(0, 0.08, 0)
+	if ghost_handle: ghost_handle.position = p + Vector3(0, 0.02, 0)
+	_set_validity(_buildable(ghost_cell))
+
+# colour the ghost + footprint green (valid) or red (invalid); gate the confirm
+func _set_validity(valid: bool) -> void:
+	ghost_valid = valid
+	if int(valid) == _last_valid: return
+	_last_valid = int(valid)
+	var col: Color = OK_GREEN if valid else BAD_RED
+	_tint_ghost(col)
+	if ghost_foot:
+		var fmat := StandardMaterial3D.new()
+		fmat.albedo_color = Color(col.r, col.g, col.b, 0.5)
+		fmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		fmat.emission_enabled = true; fmat.emission = col
+		fmat.emission_energy_multiplier = 0.5
+		ghost_foot.material_override = fmat
+	if confirm_btn:
+		confirm_btn.disabled = not valid
+		confirm_btn.modulate = Color.WHITE if valid else Color(1, 1, 1, 0.45)
+
+func _tint_ghost(col: Color) -> void:
+	if not ghost: return
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(col.r, col.g, col.b, 0.42)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.emission_enabled = true; mat.emission = col
+	mat.emission_energy_multiplier = 0.45
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	for mi in _mesh_instances(ghost):
+		mi.material_override = mat
+
+func _mesh_instances(n: Node) -> Array:
+	var out: Array = []
+	if n is MeshInstance3D: out.append(n)
+	for c in n.get_children(): out += _mesh_instances(c)
+	return out
+
+# a glowing move-gizmo that floats just in front of the ghost's base: a ground
+# ring + 4-way arrows + a grab knob on a post. Drawn on top (no depth test) so it
+# stays visible over the building, signalling "drag me to move".
+func _build_ghost_handle() -> Node3D:
+	var root := Node3D.new()
+	var accent := Color(0.30, 0.95, 1.0)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = accent
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.emission_enabled = true; mat.emission = accent
+	mat.emission_energy_multiplier = 1.0
+	mat.no_depth_test = true          # always visible, even through the building
+	mat.render_priority = 2
+	# flat ring on the ground
+	var ring := MeshInstance3D.new()
+	var tm := TorusMesh.new(); tm.inner_radius = 0.30; tm.outer_radius = 0.46
+	ring.mesh = tm; ring.material_override = mat; ring.position.y = 0.04
+	root.add_child(ring)
+	# 4-way move arrows around the ring
+	for i in 4:
+		var a := MeshInstance3D.new()
+		var pm := PrismMesh.new(); pm.size = Vector3(0.18, 0.20, 0.07)
+		a.mesh = pm; a.material_override = mat
+		var ang := deg_to_rad(i * 90)
+		a.rotation_degrees = Vector3(90, i * 90, 0)
+		a.position = Vector3(sin(ang) * 0.40, 0.05, cos(ang) * 0.40)
+		root.add_child(a)
+	# post + grab knob rising from the ring
+	var post := MeshInstance3D.new()
+	var sc := CylinderMesh.new(); sc.top_radius = 0.05; sc.bottom_radius = 0.05; sc.height = 0.5
+	post.mesh = sc; post.material_override = mat; post.position.y = 0.3
+	root.add_child(post)
+	var knob := MeshInstance3D.new()
+	var sp := SphereMesh.new(); sp.radius = 0.17; sp.height = 0.34
+	knob.mesh = sp; knob.material_override = mat; knob.position.y = 0.62
+	root.add_child(knob)
+	return root
+
+func _near_handle(pos: Vector2) -> bool:
+	if not ghost_handle: return false
+	var hp: Vector3 = ghost_handle.global_position + Vector3(0, 0.4, 0)
+	if cam.is_position_behind(hp): return false
+	return cam.unproject_position(hp).distance_to(pos) <= GRAB_PX
+
+func _drag_building_to(pos: Vector2) -> void:
+	var cell := _cell_from_screen(pos)
+	if cell == Vector2i(999, 999): return
+	ghost_cell = cell
+	_update_ghost()
 
 func _exit_placing() -> void:
 	placing = false
+	dragging_building = false
 	for m in place_markers: m.queue_free()
 	place_markers.clear()
 	if ghost: ghost.queue_free(); ghost = null
 	if ghost_foot: ghost_foot.queue_free(); ghost_foot = null
+	if ghost_handle: ghost_handle.queue_free(); ghost_handle = null
 	_update_action_rows()
 
 # ── HUD (themed, responsive containers) ───────────────────────────────────────
@@ -397,6 +787,27 @@ func _new_button(text: String, variation := "") -> Button:
 	b.focus_mode = Control.FOCUS_NONE
 	b.pressed.connect(func(): Sfx.play("ui_tap", -13))
 	return b
+
+# solid filled button in a flat colour (used for the green Confirm / red Cancel)
+func _style_solid_button(b: Button, col: Color) -> void:
+	b.focus_mode = Control.FOCUS_NONE
+	b.pressed.connect(func(): Sfx.play("ui_tap", -13))
+	for st in ["normal", "hover", "pressed", "disabled"]:
+		var sb := StyleBoxFlat.new()
+		var c := col
+		if st == "hover": c = col.lightened(0.12)
+		elif st == "pressed": c = col.darkened(0.12)
+		elif st == "disabled": c = Color(col.r, col.g, col.b, 0.4)
+		sb.bg_color = c
+		sb.set_corner_radius_all(16)
+		sb.set_border_width_all(3); sb.border_color = UiTheme.INK   # pop-art ink outline
+		sb.content_margin_top = 10; sb.content_margin_bottom = 10
+		sb.content_margin_left = 14; sb.content_margin_right = 14
+		b.add_theme_stylebox_override(st, sb)
+	for fc in ["font_color", "font_hover_color", "font_pressed_color"]:
+		b.add_theme_color_override(fc, Color.WHITE)
+	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.7))
+	b.add_theme_font_size_override("font_size", 21)
 
 func _hsep() -> Control:
 	var s := Control.new()
@@ -442,6 +853,8 @@ func _setup_hud() -> void:
 	var mrow := HBoxContainer.new(); stats_v.add_child(mrow)
 	mrow.add_child(_new_label("MOMENTUM", "Dim"))
 	hot_label = _new_label("", "Dim"); hot_label.add_theme_color_override("font_color", UiTheme.FIRE)
+	hot_label.add_theme_color_override("font_outline_color", UiTheme.INK)
+	hot_label.add_theme_constant_override("outline_size", 4)
 	mrow.add_child(hot_label)
 	mrow.add_child(_hsep())
 	momentum_label = _new_label("1.0×", "Stat"); momentum_label.add_theme_color_override("font_color", UiTheme.FIRE)
@@ -462,6 +875,8 @@ func _setup_hud() -> void:
 	gh_banner.theme_type_variation = "Card2"
 	top_v.add_child(gh_banner)
 	gh_label = _new_label("", ""); gh_label.add_theme_color_override("font_color", UiTheme.GOLD)
+	gh_label.add_theme_color_override("font_outline_color", UiTheme.INK)
+	gh_label.add_theme_constant_override("outline_size", 5)
 	gh_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	gh_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	gh_banner.add_child(gh_label)
@@ -541,13 +956,17 @@ func _setup_hud() -> void:
 	confirm_row = HBoxContainer.new()
 	confirm_row.add_theme_constant_override("separation", 8)
 	bottom_v.add_child(confirm_row)
-	confirm_btn = _new_button("✓ Place here", "Primary")
+	confirm_btn = Button.new()
+	confirm_btn.text = "✓ Confirm"
 	confirm_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	confirm_btn.custom_minimum_size = Vector2(0, 54)
+	confirm_btn.custom_minimum_size = Vector2(0, 58)
+	_style_solid_button(confirm_btn, OK_GREEN)
 	confirm_btn.pressed.connect(_on_confirm_place)
-	cancel_btn = _new_button("✕ Cancel", "Ghost")
+	cancel_btn = Button.new()
+	cancel_btn.text = "✕ Cancel"
 	cancel_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cancel_btn.custom_minimum_size = Vector2(0, 54)
+	cancel_btn.custom_minimum_size = Vector2(0, 58)
+	_style_solid_button(cancel_btn, BAD_RED)
 	cancel_btn.pressed.connect(_exit_placing)
 	confirm_row.add_child(confirm_btn); confirm_row.add_child(cancel_btn)
 	confirm_row.visible = false
@@ -679,7 +1098,7 @@ func _on_confirm_place() -> void:
 	if not placing: return
 	var cell := ghost_cell
 	if not _buildable(cell):
-		_toast("Pick a glowing plot", UiTheme.RED); return
+		_toast("Drag to a green spot first", BAD_RED); return
 	confirm_btn.disabled = true
 	var r: Dictionary = await Net.build()
 	confirm_btn.disabled = false
@@ -742,6 +1161,8 @@ func _auto_build() -> void:
 
 # ── per-frame ─────────────────────────────────────────────────────────────────
 func _process(delta: float) -> void:
+	_t += delta
+	_animate_scenery(delta)
 	if view.is_empty(): return
 	var target := float(_wallet("coins", 0))
 	coins_shown = lerpf(coins_shown, target, clampf(delta * 6.0, 0, 1))
