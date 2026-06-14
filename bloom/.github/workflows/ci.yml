@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck (all packages)
+        run: npm run typecheck
+      - name: Unit + integration tests (memory backends)
+        run: npm test
+      - name: Client production build
+        run: npm -w @bloom/client run build

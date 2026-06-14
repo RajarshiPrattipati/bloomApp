@@ -1,0 +1,46 @@
+# ── dependencies ──
+node_modules/
+.pnp
+.pnp.js
+
+# ── build output ──
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.vercel/
+
+# ── env / secrets ──
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# ── Godot (bloom-godot, Starter-Kit-City-Builder) ──
+.godot/
+*.import
+android/build/
+bloom-godot/build/
+*.apk
+*.aab
+*.ipa
+*.tpz
+debug.keystore
+*.keystore
+
+# ── data / logs ──
+*.log
+telemetry/*.jsonl
+.drizzle/
+playwright-report/
+test-results/
+
+# ── os / editor ──
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# third-party reference kit (own upstream git repo)
+Starter-Kit-City-Builder/

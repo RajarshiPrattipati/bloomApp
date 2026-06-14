@@ -1,0 +1,6 @@
+{
+  "_comment": "Copy to playtest-human.json and fill from PLAYTEST_KIT.md observer sheet.",
+  "testers": 8,
+  "explainedCorrectly": 6,
+  "wouldReopen": 5
+}

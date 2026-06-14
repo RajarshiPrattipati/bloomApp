@@ -1,0 +1,66 @@
+{
+  "ts": 1781457968613,
+  "base": "http://localhost:3001",
+  "sessions": 100,
+  "durationSec": 11.3,
+  "serverGoldenHourMs": 2500,
+  "decayPerSec": 0.5,
+  "metrics": {
+    "medianSpins": 36,
+    "hotRate": 0.4015859529878221,
+    "respinRate": 0.6844262295081968,
+    "helpRate": 1,
+    "medianLenSec": 11.056,
+    "totalSpins": 3531,
+    "totalHot": 1418,
+    "totalWarn": 244,
+    "totalRespin": 167,
+    "ghCompleted": 254,
+    "gratitude": 651,
+    "builtAtLeastOnce": 100
+  },
+  "rubric": [
+    {
+      "metric": "Median spins / session",
+      "value": 36,
+      "goBar": 25,
+      "pass": true
+    },
+    {
+      "metric": "Hot-spin rate (momentum ≥1.5×)",
+      "value": "40",
+      "goBar": 40,
+      "pass": true
+    },
+    {
+      "metric": "Re-spin after cooling warning",
+      "value": "68",
+      "goBar": 50,
+      "pass": true
+    },
+    {
+      "metric": "Helped ≥1 stranger",
+      "value": "100",
+      "goBar": 75,
+      "pass": true
+    },
+    {
+      "metric": "Median session length",
+      "value": "11.1",
+      "goBar": "—",
+      "pass": null
+    },
+    {
+      "metric": "Explain-in-one-sentence",
+      "value": "n/a",
+      "goBar": 6,
+      "pass": null
+    },
+    {
+      "metric": "Would reopen tomorrow",
+      "value": "n/a",
+      "goBar": 5,
+      "pass": null
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "skills": {
+    "agent-browser": {
+      "source": "vercel-labs/agent-browser",
+      "sourceType": "github",
+      "skillPath": "skills/agent-browser/SKILL.md",
+      "computedHash": "228f87d57035100d9dc6efcfc05aafd4b6e3962adacaa04b8217ab2fadb15dc8"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "skillPath": "skills/find-skills/SKILL.md",
+      "computedHash": "9e1c8b3103f92fa8092568a44fe64858de7c5c9dc65ce4bea8f168080e889cfd"
+    },
+    "game-design-document": {
+      "source": "ityes22/game-design-document",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "c891402a593b05587c4ea37179419502980998112da3aec64797ad24f491aa99"
+    },
+    "game-development": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "skillPath": "skills/game-development/SKILL.md",
+      "computedHash": "a5a1b37d86be11134798abc1558f964ca4fc538fc56ac661f779a90a54e338ca"
+    },
+    "game-engine": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/game-engine/SKILL.md",
+      "computedHash": "20057f62cf7a8b2d9f940b3de0b18e5426e8f4bb50e236d36b1033aa0d42c4d8"
+    },
+    "godot-asset-generator": {
+      "source": "jwynia/agent-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/tech/game-development/godot/godot-asset-generator/SKILL.md",
+      "computedHash": "0b07b3ad870b6413ff2749c22281b09d7e5187c9ea57d9d3090a0bc4b9f69a6d"
+    },
+    "godot-best-practices": {
+      "source": "jwynia/agent-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/tech/game-development/godot/godot-best-practices/SKILL.md",
+      "computedHash": "1137c05247cfcc6547064f99c6eeddcdb0e18fab9d76b2c40d8d4cf12b6c6025"
+    },
+    "godot-master": {
+      "source": "thedivergentai/gd-agentic-skills",
+      "sourceType": "github",
+      "skillPath": "skills/godot-master/SKILL.md",
+      "computedHash": "fbbd03d82e9d284af7fbf436f2d18fd338e3ec657b4359425a0674f6752f3026"
+    },
+    "godot-ui": {
+      "source": "zate/cc-godot",
+      "sourceType": "github",
+      "skillPath": "plugins/gd/skills/godot-ui/SKILL.md",
+      "computedHash": "6dacfd4fd9f2ad8a51ebca86da470e3b9d37430914441a3c9efa4bfc5094c319"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "bloom",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BLOOM — production cooperative spin-builder (server + client monorepo)",
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/client"
+  ],
+  "scripts": {
+    "build:shared": "npm -w @bloom/shared run build",
+    "dev:server": "npm -w @bloom/server run dev",
+    "dev:client": "npm -w @bloom/client run dev",
+    "test": "npm -w @bloom/shared run test && npm -w @bloom/server run test",
+    "typecheck": "npm -w @bloom/shared run typecheck && npm -w @bloom/server run typecheck && npm -w @bloom/client run typecheck",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "db:migrate": "npm -w @bloom/server run db:migrate",
+    "smoke:prod": "node scripts/smoke-prod.mjs",
+    "build:client": "npm -w @bloom/client run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
