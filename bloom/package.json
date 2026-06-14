@@ -10,6 +10,7 @@
     "packages/client"
   ],
   "scripts": {
+    "postinstall": "npm run build:shared",
     "build:shared": "npm -w @bloom/shared run build",
     "dev:server": "npm -w @bloom/server run dev",
     "dev:client": "npm -w @bloom/client run dev",
