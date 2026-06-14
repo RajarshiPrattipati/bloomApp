@@ -1,7 +1,10 @@
 // Vercel serverless entry for the BLOOM API (pure serverless — no WebSockets).
 //
-// A single Node function catches every `/api/*` route ([...path] preserves the
-// original URL) and forwards it into the Fastify app. The app is built once per
+// A single Node function at /api handles every route: vercel.json rewrites
+// `/api/(.*)` → `/api`, and Vercel preserves the original request URL, so Fastify
+// still routes nested paths (/api/auth/device, /api/team/list) internally. (An
+// `api/[...path]` catch-all only matched one segment, 404ing nested routes.) The
+// app is built once per
 // warm instance (module scope) and reused; we never register the `/ws` realtime
 // layer here, and AUTO_MIGRATE is forced off so cold starts don't run schema
 // bootstrap on every invocation (run `npm run db:migrate` once at deploy time).

@@ -5,8 +5,11 @@
   "buildCommand": "npm run build:shared && npm run build:client",
   "outputDirectory": "packages/client/dist",
   "functions": {
-    "api/[...path].ts": {
+    "api/index.ts": {
       "maxDuration": 15
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" }
+  ]
 }
