@@ -50,7 +50,7 @@ func _ready() -> void:
 	status_label = Label.new(); status_label.theme_type_variation = "Dim"
 	header.add_child(status_label)
 	var x := Button.new(); x.theme_type_variation = "Ghost"; x.text = "✕"; x.focus_mode = Control.FOCUS_NONE
-	x.custom_minimum_size = Vector2(40, 36)
+	x.custom_minimum_size = Vector2(44, 44)
 	x.pressed.connect(_close)
 	header.add_child(x)
 

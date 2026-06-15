@@ -61,6 +61,19 @@ static func _button_set(t: Theme, type: String, fill: Color, radius := 16, borde
 	t.set_color("font_focus_color", type, INK)
 	t.set_color("font_disabled_color", type, DIM)
 
+# a round knob texture (filled circle + ink ring) for slider grabbers
+static func _knob_tex(d: int, fill: Color, border: Color) -> ImageTexture:
+	var img := Image.create(d, d, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var c := d / 2.0
+	var r := c - 1.0
+	for y in d:
+		for x in d:
+			var dist := Vector2(x + 0.5 - c, y + 0.5 - c).length()
+			if dist <= r:
+				img.set_pixel(x, y, border if dist > r - 3.0 else fill)
+	return ImageTexture.create_from_image(img)
+
 static func _font_with_emoji() -> Font:
 	# Lilita One for chunky game text, with a system emoji fallback so 🪙🔥🌟🤝 render.
 	var f := FONT.duplicate() as FontFile
@@ -122,13 +135,18 @@ static func build() -> Theme:
 		t.set_color("font_hovered_color", klass, INK)
 	t.set_stylebox("panel", "TabContainer", _flat(PAPER, 20, 3, INK, 8, true))
 
-	# HSlider (volume) — crisp white groove so the mint fill pops, ink outline
-	var groove := _flat(Color("ffffff"), 8, 2, INK, 0)
+	# HSlider (volume) — empty (unfilled) track stays light, the filled part is mint,
+	# and a bold gold knob with an ink ring gives the handle real contrast.
+	var groove := _flat(Color("e9e2f6"), 7, 2, INK, 0)   # light lavender-grey, ink-outlined
 	for m in ["content_margin_left", "content_margin_right", "content_margin_top", "content_margin_bottom"]:
 		groove.set(m, 0)
 	t.set_stylebox("slider", "HSlider", groove)
-	t.set_stylebox("grabber_area", "HSlider", _flat(GREEN, 8, 2, INK, 0))
-	t.set_stylebox("grabber_area_highlight", "HSlider", _flat(GREEN_EDGE, 8, 2, INK, 0))
+	t.set_stylebox("grabber_area", "HSlider", _flat(GREEN, 7, 2, INK, 0))
+	t.set_stylebox("grabber_area_highlight", "HSlider", _flat(GREEN_EDGE, 7, 2, INK, 0))
+	var knob := _knob_tex(30, GOLD, INK)
+	t.set_icon("grabber", "HSlider", knob)
+	t.set_icon("grabber_highlight", "HSlider", _knob_tex(30, GOLD_EDGE, INK))
+	t.set_icon("grabber_disabled", "HSlider", _knob_tex(30, PAPER_DIS, INK))
 
 	# CheckBox (settings) — CheckBox derives from Button, so clear the inherited
 	# pastel button fill; keep just the check icon + ink label on the card.

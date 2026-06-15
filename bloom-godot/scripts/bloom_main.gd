@@ -55,6 +55,10 @@ var ghost_cell := Vector2i(999, 999)
 var ghost_valid := false
 var _last_valid := -1                         # gate re-tinting to validity changes
 var dragging_building := false
+# the building currently under construction (a Golden Hour is running for it)
+var construct_cell := Vector2i(999, 999)
+var construct_marker: Node3D
+var construct_clock: Label3D
 
 # ── HUD refs ──
 var hud: CanvasLayer
@@ -92,6 +96,14 @@ func _ready() -> void:
 	_maybe_login()
 	Sfx.start_ambience()
 	if "--placing" in OS.get_cmdline_user_args(): _enter_placing()  # dev: force placement UI pre-network
+	if "--construct" in OS.get_cmdline_user_args():                  # dev: preview the construction marker
+		_materialize(Vector2i(2, 1), 0, 0, false)
+		construct_cell = Vector2i(2, 1)
+		construct_marker = _make_construct_marker(Vector2i(2, 1))
+		gh_ends_at_ms = Time.get_ticks_msec() + 92000
+		view = {"wallet": {"level": 4, "coins": 5000, "momentum": 1.0, "helpTokens": 0},
+			"goldenHour": {"helpers": 2, "maxHelpers": 10, "msLeft": 92000},
+			"nextBuildCost": 290, "canBuild": true, "village": {"buildingsBuilt": 1}}
 	await Net.ensure_auth()
 	_load_layout()
 	cfg = await Net.get_config()
@@ -536,6 +548,80 @@ func _pick_frontier() -> Vector2i:
 	var c := _frontier_cells()
 	return c[0] if c.size() > 0 else Vector2i(999, 999)
 
+# ── "under construction" indicator on the in-progress building ─────────────────
+func _update_construction(active: bool, idx: int) -> void:
+	if active and idx < layout.size():
+		var cell := Vector2i(int(layout[idx]["x"]), int(layout[idx]["y"]))
+		if cell != construct_cell and built.has(cell):
+			_clear_construction()
+			construct_cell = cell
+			construct_marker = _make_construct_marker(cell)
+	elif not active and construct_cell != Vector2i(999, 999):
+		# the build just finished — give it a satisfying pop, then drop the marker
+		if built.has(construct_cell):
+			var n: Node3D = built[construct_cell]
+			var s: float = n.scale.x
+			var tw := create_tween()
+			tw.tween_property(n, "scale", Vector3.ONE * s * 1.2, 0.16).set_trans(Tween.TRANS_BACK)
+			tw.tween_property(n, "scale", Vector3.ONE * s, 0.22)
+		_clear_construction()
+
+func _clear_construction() -> void:
+	if is_instance_valid(construct_marker): construct_marker.queue_free()
+	construct_marker = null
+	construct_clock = null
+	construct_cell = Vector2i(999, 999)
+
+# a minimal "under construction" rig: a wooden scaffold with a platform that rides
+# up and down, plus a small billboard clock counting down the time left to finish.
+func _make_construct_marker(cell: Vector2i) -> Node3D:
+	var root := Node3D.new()
+	root.position = Vector3(cell.x, 0, cell.y)
+	add_child(root)
+	var wood := _mat(Color("b0813f"), 0.9)
+	# four corner poles
+	for sx in [-0.52, 0.52]:
+		for sz in [-0.52, 0.52]:
+			var pole := MeshInstance3D.new()
+			var pc := CylinderMesh.new(); pc.top_radius = 0.04; pc.bottom_radius = 0.04; pc.height = 1.3
+			pole.mesh = pc; pole.material_override = wood
+			pole.position = Vector3(sx, 0.65, sz)
+			root.add_child(pole)
+	# horizontal frame rails at two heights
+	for h in [0.66, 1.24]:
+		for s in [-0.52, 0.52]:
+			var rx := MeshInstance3D.new()
+			var bx := BoxMesh.new(); bx.size = Vector3(1.08, 0.05, 0.05)
+			rx.mesh = bx; rx.material_override = wood; rx.position = Vector3(0, h, s)
+			root.add_child(rx)
+			var rz := MeshInstance3D.new()
+			var bz := BoxMesh.new(); bz.size = Vector3(0.05, 0.05, 1.08)
+			rz.mesh = bz; rz.material_override = wood; rz.position = Vector3(s, h, 0)
+			root.add_child(rz)
+	# the animated work platform that rides up and down the scaffold
+	var plank := MeshInstance3D.new()
+	var pm := BoxMesh.new(); pm.size = Vector3(1.0, 0.07, 0.5)
+	plank.mesh = pm; plank.material_override = _mat(Color("e0b250"), 0.85)
+	plank.position = Vector3(0, 0.35, 0)
+	root.add_child(plank)
+	var tw := create_tween().set_loops()
+	tw.tween_property(plank, "position:y", 1.1, 1.5).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(plank, "position:y", 0.35, 1.5).set_trans(Tween.TRANS_SINE)
+	# small clock billboard with the time remaining
+	construct_clock = Label3D.new()
+	construct_clock.text = "🕐"
+	construct_clock.font = UiTheme._font_with_emoji()
+	construct_clock.font_size = 56
+	construct_clock.pixel_size = 0.0075
+	construct_clock.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	construct_clock.no_depth_test = true
+	construct_clock.modulate = UiTheme.INK
+	construct_clock.outline_modulate = Color.WHITE
+	construct_clock.outline_size = 14
+	construct_clock.position.y = 1.75
+	root.add_child(construct_clock)
+	return root
+
 # ── login (mobile + OTP) ──────────────────────────────────────────────────────
 # Show the OTP login gate unless already logged in (persisted) or a dev flag is
 # set. The game keeps initialising behind the modal; it dismisses on verify.
@@ -615,14 +701,35 @@ func _set_model(m: int) -> void:
 		_last_valid = -1   # force re-tint of the freshly-instanced ghost
 		_update_ghost()
 
-# tap handler for a palette card: select if unlocked, else nudge the player
+# why a build can't start right now ("" = it can). Drives the disabled hint.
+func _build_block() -> String:
+	if view.get("goldenHour") != null: return "busy"
+	if not view.get("canBuild", true): return "full"
+	if int(_wallet("coins", 0)) < int(view.get("nextBuildCost", 0)): return "coins"
+	return ""
+
+func _block_reason(blk: String) -> String:
+	match blk:
+		"busy": return "🕐 Finish your current building first"
+		"coins": return "🪙 Not enough coins for this build yet"
+		"full": return "🏠 No open plots to build on"
+	return ""
+
+# tap a palette card: pick it. If we're not already placing, start placing it
+# (or explain why we can't). Locked cards just nudge the player.
 func _on_card(i: int) -> void:
-	if Buildings.unlocked(i, int(_wallet("level", 1))):
-		Sfx.play("ui_tap", -13)
-		_set_model(i)
-	else:
+	if not Buildings.unlocked(i, int(_wallet("level", 1))):
 		Sfx.play("error", -10)
 		_toast("🔒 %s unlocks at level %d" % [Buildings.CATALOG[i]["name"], int(Buildings.CATALOG[i]["lvl"])], UiTheme.DIM)
+		return
+	Sfx.play("ui_tap", -13)
+	_set_model(i)
+	if not placing:
+		var blk := _build_block()
+		if blk == "":
+			_enter_placing()
+		else:
+			_toast(_block_reason(blk), UiTheme.DIM)
 
 # refresh each card's locked/selected state against the current level
 func _update_palette_selection() -> void:
@@ -807,14 +914,14 @@ func _setup_hud() -> void:
 	var header := HBoxContainer.new()
 	top_v.add_child(header)
 	var menu_btn := _new_button("☰", "Ghost")
-	menu_btn.custom_minimum_size = Vector2(48, 36)
+	menu_btn.custom_minimum_size = Vector2(48, 44)   # ≥44px touch target
 	menu_btn.pressed.connect(_on_menu)
 	header.add_child(menu_btn)
 	var title := _new_label("BLOOM", "Title")
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	header.add_child(title)
-	var spacer := Control.new(); spacer.custom_minimum_size = Vector2(48, 36)
+	var spacer := Control.new(); spacer.custom_minimum_size = Vector2(48, 44)
 	header.add_child(spacer)
 
 	var stats := PanelContainer.new()
@@ -920,7 +1027,8 @@ func _setup_hud() -> void:
 	palette_scroll.add_child(palette_box)
 	for i in Buildings.CATALOG.size():
 		palette_cards.append(_make_card(i))
-	palette_scroll.visible = false
+	palette_scroll.visible = true   # build options always shown
+	_update_palette_selection()
 
 	confirm_row = HBoxContainer.new()
 	confirm_row.add_theme_constant_override("separation", 8)
@@ -947,7 +1055,7 @@ func _setup_hud() -> void:
 
 func _update_action_rows() -> void:
 	actions_row.visible = not placing
-	palette_scroll.visible = placing
+	palette_scroll.visible = true   # build options are always shown
 	confirm_row.visible = placing
 
 # a building picker card: thumbnail preview + name, with a lock overlay when the
@@ -982,7 +1090,7 @@ func _make_card(i: int) -> Dictionary:
 	v.add_child(thumb)
 	var nm := Label.new(); nm.text = str(entry["name"])
 	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	nm.add_theme_font_size_override("font_size", 11)
+	nm.add_theme_font_size_override("font_size", 12)
 	nm.add_theme_color_override("font_color", UiTheme.INK)
 	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1030,7 +1138,13 @@ func _apply_view(v) -> void:
 	momentum_shown = float(_wallet("momentum", 1.0))
 	var gh = v.get("goldenHour")
 	if gh != null: gh_ends_at_ms = Time.get_ticks_msec() + int(gh.get("msLeft", 0))
-	_sync_building_count(int(v.get("village", {}).get("buildingsBuilt", 0)))
+	var vil: Dictionary = v.get("village", {})
+	var bcount := int(vil.get("buildingsBuilt", 0))
+	# the in-progress building isn't counted in buildingsBuilt until its Golden
+	# Hour closes — include it so it persists across restarts (no "ghost" build).
+	var building_now: bool = gh != null or bool(vil.get("constructing", false))
+	_sync_building_count(bcount + (1 if building_now else 0))
+	_update_construction(building_now, bcount)
 	_process_events(v.get("events", []))
 	var lvl := int(_wallet("level", 1))
 	if lvl > prev_level:
@@ -1077,7 +1191,7 @@ func _refresh_hud() -> void:
 	momentum_bar.value = momentum_shown
 	momentum_label.text = "%.1f×" % momentum_shown
 	momentum_label.add_theme_color_override("font_color", UiTheme.FIRE if momentum_shown >= hot_t else UiTheme.DIM)
-	hot_label.text = "🔥 HOT" if momentum_shown >= hot_t else ("❄ cooling" if momentum_shown > 1.05 else "")
+	hot_label.text = "🔥 HOT" if momentum_shown >= hot_t else ("❄ Cooling" if momentum_shown > 1.05 else "")
 	coins_label.text = "🪙 %d" % int(round(coins_shown))
 	level_label.text = "Lv %d" % int(_wallet("level", 1))
 	spins_label.text = "🎟 %d" % int(_wallet("helpTokens", 0))
@@ -1090,8 +1204,16 @@ func _refresh_hud() -> void:
 		gh_label.text = "🌟 GOLDEN HOUR %d:%02d · %d/%d helping" % [secs / 60, secs % 60, int(gh.get("helpers", 0)), int(gh.get("maxHelpers", 10))]
 	if not placing:
 		var cost := int(view.get("nextBuildCost", 0))
-		build_btn.disabled = in_gh or int(_wallet("coins", 0)) < cost or not view.get("canBuild", false)
-		build_btn.text = "building…" if in_gh else "🔨 Build · 🪙%d" % cost
+		var blk := _build_block()
+		build_btn.disabled = blk != ""
+		match blk:
+			"busy":
+				var bs: int = max(0, (gh_ends_at_ms - Time.get_ticks_msec()) / 1000)
+				build_btn.text = "🔨 Build · 🕐 %d:%02d" % [bs / 60, bs % 60]   # busy: time left
+			"full":
+				build_btn.text = "🔨 Build · 🏠 full"
+			_:
+				build_btn.text = "🔨 Build · 🪙%d" % cost   # coins-short shows cost (greyed)
 
 # ── actions ───────────────────────────────────────────────────────────────────
 func _on_spin() -> void:
@@ -1108,7 +1230,7 @@ func _on_spin() -> void:
 	if r.has("_error"):
 		gacha.queue_free(); spinning = false; spin_btn.text = "SPIN"
 		Music.set_ducked(false)
-		_toast("reconnecting…", UiTheme.RED); return
+		_toast("Reconnecting…", UiTheme.RED); return
 	gacha.reveal(r.get("result", {}))
 	await gacha.finished
 	gacha.queue_free()
@@ -1118,10 +1240,9 @@ func _on_spin() -> void:
 
 func _on_build_pressed() -> void:
 	if placing: return
-	if view.get("goldenHour") != null:
-		_toast("A Golden Hour is already running", UiTheme.DIM); return
-	if int(_wallet("coins", 0)) < int(view.get("nextBuildCost", 0)):
-		_toast("Not enough coins", UiTheme.RED); return
+	var blk := _build_block()
+	if blk != "":
+		_toast(_block_reason(blk), UiTheme.DIM); return
 	_enter_placing()
 
 func _on_confirm_place() -> void:
@@ -1129,6 +1250,10 @@ func _on_confirm_place() -> void:
 	var cell := ghost_cell
 	if not _buildable(cell):
 		_toast("Drag to a green spot first", BAD_RED); return
+	if view.get("goldenHour") != null:
+		_toast("🤝 Finish your current building first — get helpers!", UiTheme.GOLD); return
+	if int(_wallet("coins", 0)) < int(view.get("nextBuildCost", 0)):
+		_toast("Not enough coins for this build", BAD_RED); return
 	confirm_btn.disabled = true
 	var r: Dictionary = await Net.build()
 	confirm_btn.disabled = false
@@ -1147,12 +1272,20 @@ func _on_confirm_place() -> void:
 
 func _on_help() -> void:
 	var pool: Array = view.get("strangerPool", [])
-	if pool.is_empty():
-		_toast("No one to help right now", UiTheme.DIM); return
-	var r: Dictionary = await Net.help_bot(int(pool[0]["botId"]))
+	# pick the village with the MOST time left — these windows close in seconds, and
+	# pool[0] is usually the most-finished (least time), so it'd close mid-request.
+	var best: Variant = null
+	for s in pool:
+		if best == null or int(s.get("msLeft", 0)) > int(best.get("msLeft", 0)):
+			best = s
+	if best == null or int(best.get("msLeft", 0)) < 1200:
+		_toast("No villages need help this second — try again in a moment", UiTheme.DIM); return
+	var r: Dictionary = await Net.help_bot(int(best["botId"]))
 	if r.get("ok", false):
-		_toast("🤝 Helped %s · +%d🪙" % [str(pool[0].get("name", "a friend")), int(r.get("coins", 0))], UiTheme.GREEN)
+		_toast("🤝 Helped %s · +%d🪙" % [str(best.get("name", "a friend")), int(r.get("coins", 0))], UiTheme.GREEN)
 		Sfx.play("help", -8)
+	else:
+		_toast("That window just closed — try Help again!", UiTheme.DIM)
 	_apply_view(r.get("view", {}))
 
 func _on_menu() -> void:
@@ -1193,6 +1326,9 @@ func _auto_build() -> void:
 func _process(delta: float) -> void:
 	_t += delta
 	_animate_scenery(delta)
+	if is_instance_valid(construct_clock):
+		var secs := int(max(0, (gh_ends_at_ms - Time.get_ticks_msec()) / 1000))
+		construct_clock.text = "🕐 %d:%02d" % [secs / 60, secs % 60]
 	if view.is_empty(): return
 	var target := float(_wallet("coins", 0))
 	coins_shown = lerpf(coins_shown, target, clampf(delta * 6.0, 0, 1))

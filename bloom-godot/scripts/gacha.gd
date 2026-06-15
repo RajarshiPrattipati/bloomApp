@@ -94,11 +94,11 @@ func _build() -> void:
 	add_child(name_label)
 
 	sub_label = Label.new()
-	sub_label.add_theme_font_size_override("font_size", 18)
-	sub_label.add_theme_color_override("font_color", Color("b29a7e"))
+	sub_label.add_theme_font_size_override("font_size", 19)
+	sub_label.add_theme_color_override("font_color", Color("e2d6c4"))  # lighter for contrast on the dark capsule
 	sub_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub_label.size = Vector2(DW, 26); sub_label.position = Vector2(0, center.y + 172)
-	sub_label.text = "tap pulse…"
+	sub_label.text = "Tap to pulse!"
 	add_child(sub_label)
 
 	flash = ColorRect.new(); flash.color = Color(1, 1, 1, 0.0); flash.size = Vector2(DW, DH); flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
