@@ -8,10 +8,7 @@ const DW := 540.0
 const DH := 960.0
 const GRID_MIN := -5
 const GRID_MAX := 5
-const BUILDING_MODELS: Array[String] = [
-	"building-small-a", "building-small-b", "building-small-c",
-	"building-small-d", "building-garage",
-]
+# buildings live in Buildings.CATALOG (scripts/buildings.gd), unlocked by level
 
 # ── server state ──
 var view: Dictionary = {}
@@ -75,8 +72,9 @@ var confirm_btn: Button
 var cancel_btn: Button
 var actions_row: HBoxContainer
 var confirm_row: HBoxContainer
-var palette_row: HBoxContainer
-var palette_buttons: Array[Button] = []
+var palette_scroll: ScrollContainer
+var palette_box: HBoxContainer
+var palette_cards: Array = []   # [{btn, thumb, name, lock, idx}]
 var selected_model := 0
 var gh_banner: PanelContainer
 var gh_label: Label
@@ -483,7 +481,7 @@ const MAX_TIER := 2
 
 func _materialize(cell: Vector2i, model_idx: int, tier := 0, animate := true) -> void:
 	if built.has(cell): return
-	var n := _put(BUILDING_MODELS[model_idx % BUILDING_MODELS.size()], cell, float((model_idx * 90) % 360))
+	var n := _put(Buildings.model(model_idx), cell, float((model_idx * 90) % 360))
 	built[cell] = n
 	n.set_meta("tier", tier)
 	n.set_meta("model", model_idx)
@@ -580,6 +578,8 @@ func _enter_placing() -> void:
 		_toast("No room to build — village is full!", UiTheme.RED); return
 	placing = true
 	ghost_cell = cells[0]
+	if not Buildings.unlocked(selected_model, int(_wallet("level", 1))):
+		selected_model = 0   # fall back to a starter building
 	for c in cells:
 		var m := MeshInstance3D.new()
 		var bm := BoxMesh.new(); bm.size = Vector3(0.92, 0.06, 0.92)
@@ -590,7 +590,7 @@ func _enter_placing() -> void:
 		m.material_override = mat
 		m.position = Vector3(c.x, 0.06, c.y)
 		add_child(m); place_markers.append(m)
-	ghost = _instance(BUILDING_MODELS[selected_model])
+	ghost = _instance(Buildings.model(selected_model))
 	add_child(ghost)
 	ghost_foot = MeshInstance3D.new()
 	var fm := BoxMesh.new(); fm.size = Vector3(1.0, 0.12, 1.0)
@@ -610,14 +610,35 @@ func _set_model(m: int) -> void:
 	_update_palette_selection()
 	if placing and ghost:
 		ghost.queue_free()
-		ghost = _instance(BUILDING_MODELS[selected_model])
+		ghost = _instance(Buildings.model(selected_model))
 		add_child(ghost)
 		_last_valid = -1   # force re-tint of the freshly-instanced ghost
 		_update_ghost()
 
+# tap handler for a palette card: select if unlocked, else nudge the player
+func _on_card(i: int) -> void:
+	if Buildings.unlocked(i, int(_wallet("level", 1))):
+		Sfx.play("ui_tap", -13)
+		_set_model(i)
+	else:
+		Sfx.play("error", -10)
+		_toast("🔒 %s unlocks at level %d" % [Buildings.CATALOG[i]["name"], int(Buildings.CATALOG[i]["lvl"])], UiTheme.DIM)
+
+# refresh each card's locked/selected state against the current level
 func _update_palette_selection() -> void:
-	for i in palette_buttons.size():
-		palette_buttons[i].theme_type_variation = "Primary" if i == selected_model else "Ghost"
+	var lvl := int(_wallet("level", 1))
+	for c in palette_cards:
+		var i: int = c["idx"]
+		var open: bool = Buildings.unlocked(i, lvl)
+		c["lock"].visible = not open
+		c["thumb"].modulate = Color(1, 1, 1, 1.0) if open else Color(0.5, 0.5, 0.6, 0.45)
+		c["name"].modulate = Color(1, 1, 1, 1.0) if open else Color(1, 1, 1, 0.4)
+		var sb := (c["btn"].get_theme_stylebox("normal") as StyleBoxFlat).duplicate()
+		if i == selected_model and open:
+			sb.border_color = UiTheme.GOLD; sb.set_border_width_all(4); sb.bg_color = UiTheme.GOLD_EDGE
+		else:
+			sb.border_color = UiTheme.INK; sb.set_border_width_all(2); sb.bg_color = UiTheme.PAPER_2 if open else UiTheme.PAPER_DIS
+		c["btn"].add_theme_stylebox_override("normal", sb)
 
 func _update_ghost() -> void:
 	ghost_cell.x = clampi(ghost_cell.x, GRID_MIN, GRID_MAX)
@@ -888,21 +909,18 @@ func _setup_hud() -> void:
 	help_btn.pressed.connect(_on_help)
 	actions_row.add_child(build_btn); actions_row.add_child(help_btn)
 
-	# building-style palette (shown while placing)
-	palette_row = HBoxContainer.new()
-	palette_row.add_theme_constant_override("separation", 6)
-	bottom_v.add_child(palette_row)
-	var style_icons := ["🏠", "🏡", "🏢", "🏬", "🏭"]
-	for i in BUILDING_MODELS.size():
-		var sb := _new_button(style_icons[i] if i < style_icons.size() else "🏠", "Ghost")
-		sb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		sb.custom_minimum_size = Vector2(0, 44)
-		sb.add_theme_font_size_override("font_size", 22)
-		var mi := i
-		sb.pressed.connect(func(): _set_model(mi))
-		palette_row.add_child(sb)
-		palette_buttons.append(sb)
-	palette_row.visible = false
+	# building picker — horizontally scrollable previews, locked by level
+	palette_scroll = ScrollContainer.new()
+	palette_scroll.custom_minimum_size = Vector2(0, 116)
+	palette_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	palette_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	bottom_v.add_child(palette_scroll)
+	palette_box = HBoxContainer.new()
+	palette_box.add_theme_constant_override("separation", 8)
+	palette_scroll.add_child(palette_box)
+	for i in Buildings.CATALOG.size():
+		palette_cards.append(_make_card(i))
+	palette_scroll.visible = false
 
 	confirm_row = HBoxContainer.new()
 	confirm_row.add_theme_constant_override("separation", 8)
@@ -929,8 +947,61 @@ func _setup_hud() -> void:
 
 func _update_action_rows() -> void:
 	actions_row.visible = not placing
-	palette_row.visible = placing
+	palette_scroll.visible = placing
 	confirm_row.visible = placing
+
+# a building picker card: thumbnail preview + name, with a lock overlay when the
+# player's level is too low. Tap → select (handled in _on_card).
+func _make_card(i: int) -> Dictionary:
+	var entry: Dictionary = Buildings.CATALOG[i]
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(94, 112)
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.clip_contents = true
+	var base := StyleBoxFlat.new()
+	base.bg_color = UiTheme.PAPER_2
+	base.set_corner_radius_all(12)
+	base.set_border_width_all(2); base.border_color = UiTheme.INK
+	for m in ["content_margin_left", "content_margin_right", "content_margin_top", "content_margin_bottom"]:
+		base.set(m, 4)
+	btn.add_theme_stylebox_override("normal", base)
+	btn.add_theme_stylebox_override("hover", base)
+	btn.add_theme_stylebox_override("pressed", base)
+	var v := VBoxContainer.new()
+	v.set_anchors_preset(Control.PRESET_FULL_RECT)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_theme_constant_override("separation", 1)
+	btn.add_child(v)
+	var thumb := TextureRect.new()
+	thumb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	thumb.custom_minimum_size = Vector2(0, 80)
+	thumb.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	thumb.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	var tp := Buildings.thumb_path(i)
+	if ResourceLoader.exists(tp): thumb.texture = load(tp)
+	v.add_child(thumb)
+	var nm := Label.new(); nm.text = str(entry["name"])
+	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	nm.add_theme_font_size_override("font_size", 11)
+	nm.add_theme_color_override("font_color", UiTheme.INK)
+	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	nm.custom_minimum_size = Vector2(0, 26)
+	v.add_child(nm)
+	var lock := Label.new(); lock.text = "🔒\nLv %d" % int(entry["lvl"])
+	lock.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lock.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lock.set_anchors_preset(Control.PRESET_FULL_RECT)
+	lock.add_theme_font_size_override("font_size", 15)
+	lock.add_theme_color_override("font_color", Color.WHITE)
+	lock.add_theme_color_override("font_outline_color", UiTheme.INK)
+	lock.add_theme_constant_override("outline_size", 6)
+	lock.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn.add_child(lock)
+	var idx := i
+	btn.pressed.connect(func(): _on_card(idx))
+	palette_box.add_child(btn)
+	return {"btn": btn, "thumb": thumb, "name": nm, "lock": lock, "idx": i}
 
 func _toast(text: String, accent: Color) -> void:
 	var p := PanelContainer.new()
@@ -963,9 +1034,17 @@ func _apply_view(v) -> void:
 	_process_events(v.get("events", []))
 	var lvl := int(_wallet("level", 1))
 	if lvl > prev_level:
+		# announce any buildings the new level just unlocked
+		for nl in range(prev_level + 1, lvl + 1):
+			var freshly: Array = []
+			for entry in Buildings.CATALOG:
+				if int(entry["lvl"]) == nl: freshly.append(str(entry["name"]))
+			if not freshly.is_empty():
+				_toast("🔓 Unlocked: %s" % ", ".join(freshly), UiTheme.GREEN)
 		prev_level = lvl
 		Sfx.play("level_up", -6)
 		_toast("⬆ Level %d!" % lvl, UiTheme.GOLD)
+		if placing: _update_palette_selection()
 	_refresh_hud()
 
 func _process_events(events: Array) -> void:
