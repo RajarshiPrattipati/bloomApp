@@ -257,48 +257,67 @@ func _build_scenery() -> void:
 	foam.position = Vector3(0, -0.2, 0)
 	add_child(foam)
 
-	# ── forest ring: Kenney tree tiles scattered around the village edge
+	# ── rocky Kenney coastline: tall rocks ring the shore, with chunky headlands
+	var coast := ["nature/rock_largeA", "nature/rock_largeB", "nature/rock_largeC", "nature/rock_largeE", "nature/rock_tallA", "nature/rock_tallC"]
+	var n_coast := 30
+	for i in n_coast:
+		var ang := (TAU / n_coast) * i + rng.randf_range(-0.07, 0.07)
+		var rad := rng.randf_range(11.1, 12.0)
+		_put_model(coast[rng.randi() % coast.size()], Vector3(cos(ang) * rad, -0.18, sin(ang) * rad), rng.randf() * TAU, rng.randf_range(0.7, 1.25))
+	for i in 6:
+		var ang := rng.randf() * TAU
+		var rad := rng.randf_range(10.9, 11.7)
+		_put_model("nature/cliff_block_rock", Vector3(cos(ang) * rad, -0.95, sin(ang) * rad), rng.randf() * TAU, 1.05)
+
+	# ── lush forest ring: varied nature trees (with autumn pops) around the edge
+	var trees := ["nature/tree_default", "nature/tree_detailed", "nature/tree_fat", "nature/tree_oak", "nature/tree_tall", "nature/tree_pineRoundA", "nature/tree_pineRoundC", "nature/tree_pineTallA", "nature/tree_blocks", "nature/tree_cone"]
+	var trees_fall := ["nature/tree_default_fall", "nature/tree_oak_fall", "nature/tree_detailed_fall", "nature/tree_tall_fall"]
 	for x in range(-10, 11):
 		for z in range(-10, 11):
 			var c := Vector2i(x, z)
 			var d := Vector2(x, z).length()
-			if d < 6.2 or d > 10.3: continue       # a band just outside the buildable grid
+			if d < 6.0 or d > 10.2: continue
 			if no_build.has(c): continue
-			if rng.randf() > 0.5: continue
-			var t := _put(("grass-trees-tall" if rng.randf() > 0.5 else "grass-trees"), c, rng.randf() * 360.0)
-			var s := rng.randf_range(0.85, 1.15)
-			t.scale = Vector3(s, s, s)
+			if rng.randf() > 0.55: continue
+			var jit := Vector3(rng.randf_range(-0.3, 0.3), 0, rng.randf_range(-0.3, 0.3))
+			var pick: String = trees_fall[rng.randi() % trees_fall.size()] if rng.randf() < 0.18 else trees[rng.randi() % trees.size()]
+			_put_model(pick, Vector3(x, 0, z) + jit, rng.randf() * TAU, rng.randf_range(0.85, 1.25))
 
-	# ── boulders dotted along the shore
-	for i in 9:
+	# ── boulders & stones scattered on the island
+	var rocks := ["nature/rock_smallA", "nature/rock_smallB", "nature/rock_smallC", "nature/stone_smallA", "nature/rock_largeD", "nature/stone_largeA"]
+	for i in 15:
 		var ang := rng.randf() * TAU
-		var rad := rng.randf_range(9.6, 11.6)
-		_rock(Vector3(cos(ang) * rad, -0.18, sin(ang) * rad), rng.randf_range(0.5, 1.1), rng)
+		var rad := rng.randf_range(6.0, 10.8)
+		_put_model(rocks[rng.randi() % rocks.size()], Vector3(cos(ang) * rad, 0.0, sin(ang) * rad), rng.randf() * TAU, rng.randf_range(0.7, 1.2))
 
-	# ── wildflowers across the meadow for little colour pops
-	var blooms := [Color("ff9ec9"), Color("ffe27a"), Color("c6a9ff"), Color("ff8a8a"), Color("ffffff")]
-	for i in 46:
+	# ── wildflowers, mushrooms, bushes & grass tufts across the meadow
+	var deco := ["nature/flower_purpleA", "nature/flower_redA", "nature/flower_yellowA", "nature/flower_purpleC", "nature/flower_redB", "nature/flower_yellowB", "nature/mushroom_red", "nature/mushroom_tan", "nature/plant_bush", "nature/plant_bushSmall", "nature/grass_leafs", "nature/grass", "nature/plant_flatShort"]
+	for i in 70:
 		var ang := rng.randf() * TAU
-		var rad := rng.randf_range(5.6, 10.6)
-		var p := Vector3(cos(ang) * rad, 0.05, sin(ang) * rad)
-		if Vector2(p.x, p.z).length() < 6.0 and no_build.has(Vector2i(roundi(p.x), roundi(p.z))): continue
-		_flower(p, blooms[rng.randi() % blooms.size()], rng)
+		var rad := rng.randf_range(5.4, 10.6)
+		var p := Vector3(cos(ang) * rad, 0.0, sin(ang) * rad)
+		if Vector2(p.x, p.z).length() < 6.2 and no_build.has(Vector2i(roundi(p.x), roundi(p.z))): continue
+		_put_model(deco[rng.randi() % deco.size()], p, rng.randf() * TAU, rng.randf_range(0.8, 1.3))
 
-	# ── sailboats bobbing on the sea
-	for i in 3:
+	# ── canoes drifting in the shallows (animated)
+	for i in 4:
 		var ang := rng.randf() * TAU
-		var rad := rng.randf_range(14.5, 20.0)
-		var b := _boat(Vector3(cos(ang) * rad, -0.32, sin(ang) * rad), rng)
-		_boats.append({"node": b, "base_y": -0.32, "speed": rng.randf_range(0.6, 1.1), "phase": rng.randf() * TAU})
+		var rad := rng.randf_range(13.2, 16.5)
+		var b := _put_model("nature/canoe", Vector3(cos(ang) * rad, -0.32, sin(ang) * rad), rng.randf() * TAU, 1.0)
+		if b: _boats.append({"node": b, "base_y": -0.32, "speed": rng.randf_range(0.6, 1.1), "phase": rng.randf() * TAU})
 
-	# ── lily pads in the shallows
-	for i in 10:
+	# ── a cosy campsite landmark on the shore (campfire + logs + tent)
+	var camp := Vector3(8.0, 0.0, 7.6)
+	_put_model("nature/campfire_stones", camp, 0.0, 1.0)
+	_put_model("nature/log", camp + Vector3(1.0, 0, 0.4), 0.6, 1.0)
+	_put_model("nature/log", camp + Vector3(-0.9, 0, -0.5), 2.1, 1.0)
+	_put_model("nature/tent_smallOpen", camp + Vector3(0.3, 0, -1.7), 3.2, 1.1)
+
+	# ── reedy grass tufts in the shallows
+	for i in 8:
 		var ang := rng.randf() * TAU
-		var rad := rng.randf_range(12.8, 16.0)
-		_lilypad(Vector3(cos(ang) * rad, -0.31, sin(ang) * rad), rng)
-
-	# ── a little lighthouse landmark on the shore
-	_lighthouse(Vector3(8.4, -0.05, 8.4))
+		var rad := rng.randf_range(12.6, 16.5)
+		_put_model("nature/grass_leafs", Vector3(cos(ang) * rad, -0.3, sin(ang) * rad), rng.randf() * TAU, rng.randf_range(0.8, 1.4))
 
 	# ── a couple of little bird flocks circling overhead
 	for i in 3:
@@ -308,86 +327,18 @@ func _build_scenery() -> void:
 		_birds.append({"node": fl, "radius": rad, "speed": rng.randf_range(0.12, 0.24),
 			"phase": ang, "cx": rng.randf_range(-2, 2), "cz": rng.randf_range(-2, 2), "y": rng.randf_range(15.0, 22.0)})
 
-func _rock(pos: Vector3, s: float, rng: RandomNumberGenerator) -> void:
-	var mi := MeshInstance3D.new()
-	var sm := SphereMesh.new(); sm.radius = s; sm.height = s * 1.5
-	mi.mesh = sm
-	mi.material_override = _mat(Color("b7b2c9").lightened(rng.randf_range(-0.05, 0.08)), 0.95)
-	mi.scale = Vector3(1.0, rng.randf_range(0.55, 0.8), 1.0)
-	mi.position = pos
-	mi.rotation.y = rng.randf() * TAU
-	add_child(mi)
-
-func _flower(pos: Vector3, col: Color, rng: RandomNumberGenerator) -> void:
-	var root := Node3D.new()
-	var stem := MeshInstance3D.new()
-	var sc := CylinderMesh.new(); sc.top_radius = 0.02; sc.bottom_radius = 0.02; sc.height = 0.28
-	stem.mesh = sc; stem.material_override = _mat(Color("6fae5a"), 0.9); stem.position.y = 0.14
-	root.add_child(stem)
-	var head := MeshInstance3D.new()
-	var hs := SphereMesh.new(); hs.radius = 0.08; hs.height = 0.16
-	head.mesh = hs; head.material_override = _mat(col, 0.8); head.position.y = 0.3
-	root.add_child(head)
-	root.position = pos
-	root.scale = Vector3.ONE * rng.randf_range(0.8, 1.3)
-	add_child(root)
-
-func _boat(pos: Vector3, rng: RandomNumberGenerator) -> Node3D:
-	var root := Node3D.new()
-	var hull_cols := [Color("ff8aa6"), Color("8fd2ff"), Color("ffd166"), Color("c6a9ff")]
-	var hull := MeshInstance3D.new()
-	var hm := BoxMesh.new(); hm.size = Vector3(0.9, 0.34, 0.5)
-	hull.mesh = hm; hull.material_override = _mat(hull_cols[rng.randi() % hull_cols.size()], 0.6)
-	hull.position.y = 0.1
-	root.add_child(hull)
-	var mast := MeshInstance3D.new()
-	var mc := CylinderMesh.new(); mc.top_radius = 0.025; mc.bottom_radius = 0.025; mc.height = 0.8
-	mast.mesh = mc; mast.material_override = _mat(Color("9c6b43"), 0.9); mast.position.y = 0.6
-	root.add_child(mast)
-	var sail := MeshInstance3D.new()
-	var pm := PrismMesh.new(); pm.size = Vector3(0.5, 0.7, 0.02)
-	sail.mesh = pm; sail.material_override = _mat(Color(1, 1, 1, 1.0), 0.85)
-	sail.position = Vector3(0.0, 0.66, 0.0); sail.rotation.z = -PI / 2
-	root.add_child(sail)
-	root.position = pos
-	root.rotation.y = rng.randf() * TAU
-	add_child(root)
-	return root
-
-func _lilypad(pos: Vector3, rng: RandomNumberGenerator) -> void:
-	var pad := MeshInstance3D.new()
-	var cm := CylinderMesh.new(); cm.top_radius = 0.34; cm.bottom_radius = 0.34; cm.height = 0.04
-	pad.mesh = cm; pad.material_override = _mat(Color("6cc06a"), 0.9)
-	pad.position = pos
-	pad.scale = Vector3.ONE * rng.randf_range(0.7, 1.2)
-	add_child(pad)
-	if rng.randf() > 0.5:
-		var fl := MeshInstance3D.new()
-		var fs := SphereMesh.new(); fs.radius = 0.1; fs.height = 0.18
-		fl.mesh = fs; fl.material_override = _mat(Color("ff9ec9"), 0.8)
-		fl.position = pos + Vector3(0, 0.08, 0)
-		add_child(fl)
-
-func _lighthouse(pos: Vector3) -> void:
-	var root := Node3D.new()
-	var base := MeshInstance3D.new()
-	var bc := CylinderMesh.new(); bc.top_radius = 0.28; bc.bottom_radius = 0.4; bc.height = 1.5
-	base.mesh = bc; base.material_override = _mat(Color("fff3e9"), 0.9); base.position.y = 0.75
-	root.add_child(base)
-	var stripe := MeshInstance3D.new()
-	var sc := CylinderMesh.new(); sc.top_radius = 0.31; sc.bottom_radius = 0.35; sc.height = 0.34
-	stripe.mesh = sc; stripe.material_override = _mat(Color("ff7d8c"), 0.9); stripe.position.y = 0.7
-	root.add_child(stripe)
-	var lamp := MeshInstance3D.new()
-	var lc := CylinderMesh.new(); lc.top_radius = 0.22; lc.bottom_radius = 0.22; lc.height = 0.3
-	lamp.mesh = lc; lamp.material_override = _mat(Color("ffe27a"), 0.4, 0.0, true); lamp.position.y = 1.62
-	root.add_child(lamp)
-	var roof := MeshInstance3D.new()
-	var rc := CylinderMesh.new(); rc.top_radius = 0.0; rc.bottom_radius = 0.3; rc.height = 0.3
-	roof.mesh = rc; roof.material_override = _mat(Color("ff7d8c"), 0.9); roof.position.y = 1.92
-	root.add_child(roof)
-	root.position = pos
-	add_child(root)
+# instance a Kenney model by "subfolder/name"; safely skips if the name is wrong
+func _put_model(name: String, pos: Vector3, rot_y := 0.0, scl := 1.0) -> Node3D:
+	var p := "res://models/%s.glb" % name
+	if not ResourceLoader.exists(p):
+		print("MISSING model: ", p)
+		return null
+	var n := (load(p) as PackedScene).instantiate()
+	n.position = pos
+	n.rotation.y = rot_y
+	n.scale = Vector3.ONE * scl
+	add_child(n)
+	return n
 
 # a small flock of V-shaped birds (one Node3D we slide around the sky)
 func _flock(rng: RandomNumberGenerator) -> Node3D:
